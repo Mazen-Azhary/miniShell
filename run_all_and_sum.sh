@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+make myshell || g++ -o myshell main.cpp command.cpp tokenizer.cpp
 set -euo pipefail
 cd "testcases"
 

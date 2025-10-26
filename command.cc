@@ -1,4 +1,3 @@
-
 /*
  *
  *
@@ -12,6 +11,7 @@
 #include "command.h"
 #include "tokenizer.h"
 #include <cctype>
+#include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
 #include <iostream>
@@ -29,6 +29,16 @@
 #include <wordexp.h>
 
 using namespace std;
+
+// Helper to strip trailing \r (Windows line endings)
+char* strip_cr(const char* arg) {
+    size_t len = strlen(arg);
+    char* clean = strdup(arg);
+    if (len > 0 && clean[len - 1] == '\r')
+        clean[len - 1] = '\0';
+    return clean;
+}
+
 void parse(vector<Token> &tokens) {
   Command &currentCommand = Command::_currentCommand;
   // call by ref
@@ -38,13 +48,13 @@ void parse(vector<Token> &tokens) {
   int size = tokens.size();
 
   if (size == 0 || tokens[0].type == TOKEN_PIPE ||
-      tokens[size - 1] == TOKEN_PIPE) {
+      tokens[size - 1].type == TOKEN_PIPE) {
     // invalid command
     cout << "invalid command" << endl;
     return;
   }
 
-  for (int i = 0; i < token_size; i++) {
+  for (int i = 0; i < size; i++) {
     Token token = tokens[i];
 
     if (token.type == TOKEN_COMMAND) {
@@ -52,10 +62,10 @@ void parse(vector<Token> &tokens) {
         currentCommand.insertSimpleCommand(currentSimpleCommand);
       }
       currentSimpleCommand = new SimpleCommand();
-      char *arg = strdup(token.value.c_str());
+      char *arg = strip_cr(token.value.c_str());
       currentSimpleCommand->insertArgument(arg);
     } else if (token.type == TOKEN_ARGUMENT) {
-      char *arg = strdup(token.value.c_str());
+      char *arg = strip_cr(token.value.c_str());
       currentSimpleCommand->insertArgument(arg);
     } else if (token.type == TOKEN_PIPE) {
       if (!currentSimpleCommand) {
@@ -86,7 +96,7 @@ void parse(vector<Token> &tokens) {
       }
       {
         i++;
-        char *fileNameCstring = tokens[i].value.c_str();
+        const char *fileNameCstring = strip_cr(tokens[i].value.c_str());
         if (token.type == TOKEN_REDIRECT) {
           currentCommand._outFile = strdup(fileNameCstring);
           currentCommand._append = 0;
@@ -105,24 +115,25 @@ void parse(vector<Token> &tokens) {
         }
       }
     } else if (token.type == TOKEN_BACKGROUND) {
-      currentCommand._background = 1;
-      if (i + 1 < size) {
-        bool onlyEOForEmpty = true;
-        for (int j = i + 1; j < size; ++j) {
-          if (tokens[j].type != TOKEN_EOF) {
-            onlyEOForEmpty = false;
-            break;
-          }
-        }
-        if (!onlyEOForEmpty) {
-          cerr << "Syntax error: '&' should appear at the end of the command\n";
-          if (currentSimpleCommand)
-            delete currentSimpleCommand;
-          currentCommand.clear();
-          return;
-        }
+  currentCommand._background = 1;
+  if (i + 1 < size) {
+    bool onlyEOForEmpty = true;
+    for (int j = i + 1; j < size; ++j) {
+      if (tokens[j].type != TOKEN_EOF) {
+        onlyEOForEmpty = false;
+        break;
       }
-    } else if (token.type == TOKEN_EOF) {
+    }
+    if (!onlyEOForEmpty) {
+      cerr << "Syntax error: '&' should appear at the end of the command\n";
+      if (currentSimpleCommand)
+        delete currentSimpleCommand;
+      currentCommand.clear();
+      return;
+    }
+  }
+}
+ else if (token.type == TOKEN_EOF) {
       break;
     } else {
       cerr << "Syntax error: unexpected token '" << token.value << "'\n";
@@ -133,18 +144,12 @@ void parse(vector<Token> &tokens) {
     }
   }
 
-  if (currentSimpleCommand->_numberOfArguments > 0 || currentSimpleCommand) {
+  if (currentSimpleCommand && currentSimpleCommand->_numberOfArguments > 0) {
     currentCommand.insertSimpleCommand(currentSimpleCommand);
-  } else {
+  } else if (currentSimpleCommand) {
     delete currentSimpleCommand;
   }
-  /*
-    Implement this function
-    you must parse for all possible tokens scenario
-    right now command.execute only print the format , you will inject it in your
-    logic.
 
-  */
   currentCommand.execute();
   Command::_currentCommand.clear();
 }
@@ -168,23 +173,23 @@ void child_handler(int sig)
     errno = saved_errno;
 }
 
-    vector<string> expandWildcards(const string &arg)
-    {
-        wordexp_t p;
-        vector<string> results;
+vector<string> expandWildcards(const string &arg)
+{
+    wordexp_t p;
+    vector<string> results;
 
-        if (wordexp(arg.c_str(), &p, 0) == 0)
+    if (wordexp(arg.c_str(), &p, 0) == 0)
+    {
+        for (size_t i = 0; i < p.we_wordc; ++i)
         {
-            for (size_t i = 0; i < p.we_wordc; ++i)
-            {
-                results.push_back(p.we_wordv[i]);
-            }
+            results.push_back(p.we_wordv[i]);
         }
-        wordfree(&p);
-        if (results.empty())
-            results.push_back(arg);
-        return results;
     }
+    wordfree(&p);
+    if (results.empty())
+        results.push_back(arg);
+    return results;
+}
 
 SimpleCommand::SimpleCommand() {
   _numberOfAvailableArguments = 5;
@@ -209,7 +214,6 @@ void SimpleCommand::insertArgument(char *argument) {
         }
     }
 
-
   if (_numberOfAvailableArguments == _numberOfArguments + 1) {
     _numberOfAvailableArguments *= 2;
     _arguments = (char **)realloc(_arguments,
@@ -224,14 +228,15 @@ void SimpleCommand::insertArgument(char *argument) {
 
 Command::Command() {
   _numberOfAvailableSimpleCommands = 1;
-  _simpleCommands = (SimpleCommand **)malloc(_numberOfSimpleCommands *
+  _simpleCommands = (SimpleCommand **)malloc(_numberOfAvailableSimpleCommands *
                                              sizeof(SimpleCommand *));
-
   _numberOfSimpleCommands = 0;
-  _outFile = 0;
-  _inputFile = 0;
-  _errFile = 0;
+  _outFile = nullptr;
+  _inputFile = nullptr;
+  _errFile = nullptr;
   _background = 0;
+  _append = 0;
+  _out_error = 0;   
 }
 
 void Command::insertSimpleCommand(SimpleCommand *simpleCommand) {
@@ -273,6 +278,8 @@ void Command::clear() {
   _inputFile = 0;
   _errFile = 0;
   _background = 0;
+  _append = 0;
+  _out_error = 0;
 }
 
 void Command::print() {
@@ -471,20 +478,51 @@ void Command::execute() {
 }
 
 void Command::prompt() {
-  printf("myshell>");
-  fflush(stdout);
+  // Only print prompt when running interactively
+  bool interactive = isatty(fileno(stdin)) && isatty(fileno(stdout));
+
   string input;
   while (true) {
-    getline(cin, input);
+    if (interactive) {
+      printf("myshell>");
+      fflush(stdout);
+    }
+
+    // getline returns false on EOF (pipe closed)
+    if (!getline(cin, input)) {
+      if (interactive) printf("\n");
+      break;
+    }
+
+    // Trim leading/trailing spaces (optional but helpful)
+    size_t start = input.find_first_not_of(" \t\r\n");
+    size_t end = input.find_last_not_of(" \t\r\n");
+    if (start == string::npos) {
+      // empty line, keep looping
+      continue;
+    }
+    string trimmed = input.substr(start, end - start + 1);
+
+    if (trimmed == "exit") {
+      exit(0);
+    }
+
     vector<Token> tokens = tokenize(input);
     parse(tokens);
   }
 }
 
+
 Command Command::_currentCommand;
 SimpleCommand *Command::_currentSimpleCommand;
 
 int main() {
+  struct sigaction sa;
+  sa.sa_handler = child_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+  sigaction(SIGCHLD, &sa, NULL);
+
   Command::_currentCommand.prompt();
   return 0;
 }
