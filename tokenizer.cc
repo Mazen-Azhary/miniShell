@@ -13,20 +13,20 @@ vector<Token> tokenize(const string &input)
     {
         Token token;
 
-        if (word == "|")
+        if (word == ">>&")
+            token.type = TOKEN_REDIRECT_AND_ERROR;
+        else if (word == ">>")
+            token.type = TOKEN_APPEND;
+        else if (word == "2>")
+            token.type = TOKEN_ERROR;
+        else if (word == "|")
             token.type = TOKEN_PIPE;
         else if (word == ">")
             token.type = TOKEN_REDIRECT;
-        else if (word == ">>")
-            token.type = TOKEN_APPEND;
         else if (word == "<")
             token.type = TOKEN_INPUT;
         else if (word == "&")
             token.type = TOKEN_BACKGROUND;
-        else if (word == "2>")
-            token.type = TOKEN_ERROR;
-        else if (word == ">>&")
-            token.type = TOKEN_REDIRECT_AND_ERROR;
         else
             {
                 if (!tokens.empty())
